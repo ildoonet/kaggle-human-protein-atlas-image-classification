@@ -1,0 +1,10 @@
+model: resnet34
+epoch: 300
+lr: 0.0001
+batch: 64
+cv_fold: 0
+dropout: 0.2
+optimizer: adam
+optimizer_reg: 0.00001
+cutout_p: 0.0
+cutout_size: 20
