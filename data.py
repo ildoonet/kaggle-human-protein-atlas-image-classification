@@ -2,13 +2,14 @@ import itertools
 import os
 import numpy as np
 import cv2
+import random
 import torch
 import torch.utils.data
 import pandas as pd
 from imgaug import augmenters as iaa
 from theconf import Config as C
 
-from common import PATH, name_label_dict, LABELS, TEST, TRAIN, SAMPLE, test_aug_bs, test_aug_sz
+from common import PATH, name_label_dict, LABELS, TEST, TRAIN, SAMPLE, test_aug_bs, test_aug_sz, LABELS_HPA
 
 
 class Oversampling:
@@ -17,10 +18,9 @@ class Oversampling:
         self.train_labels['Target'] = [[int(i) for i in s.split()]
                                        for s in self.train_labels['Target']]
         # set the minimum number of duplicates for each class
-        self.multi = [1, 1, 1, 1, 1, 1, 1, 1,
-                      8, 8, 8, 1, 1, 1, 1, 8,
-                      1, 2, 1, 1, 4, 1, 1, 1,
-                      2, 1, 2, 8]
+        self.multi = [1, 1, 1, 1, 1, 1, 1, 1, 8, 8,
+                      8, 1, 1, 1, 1, 8, 1, 2, 1, 1,
+                      4, 1, 1, 1, 2, 1, 2, 8]
         # TODO : different oversampling? https://www.kaggle.com/wordroid/inceptionresnetv2-resize256-f1loss-lb0-419
 
     def get(self, image_id):
@@ -70,23 +70,33 @@ def cutout(mask_size, p, cutout_inside, mask_color=(0, 0, 0, 0)):
     return _cutout
 
 
-def get_dataset():
-    # TODO : HPA external data
+def get_dataset(oversample=True):
     cv_fold = C.get()['cv_fold']
 
-    with open(os.path.join('./split/tr_names.txt'), 'r') as text_file:
-        tr_n = text_file.read().split(',')
-    with open(os.path.join('./split/val_names.txt'), 'r') as text_file:
-        val_n = text_file.read().split(',')
+    if cv_fold < 0:
+        with open(os.path.join('./split/tr_names.txt'), 'r') as text_file:
+            tr_n = text_file.read().split(',')
+        with open(os.path.join('./split/val_names.txt'), 'r') as text_file:
+            val_n = text_file.read().split(',')
+        cval_n = val_n
+    else:
+        with open(os.path.join('./split/tr_names_fold%d' % cv_fold), 'r') as text_file:
+            tr_n = text_file.read().split(',')
+        with open(os.path.join('./split/val_names_fold%d' % cv_fold), 'r') as text_file:
+            val_n = text_file.read().split(',')
+        with open(os.path.join('./split/val_names.txt'), 'r') as text_file:
+            cval_n = text_file.read().split(',')
+
     # test_names = sorted({f[:36] for f in os.listdir(TEST)})
     with open(SAMPLE, 'r') as text_file:
         test_names = [x.split(',')[0] for x in text_file.readlines()[1:]]
 
-    print(len(tr_n), len(val_n), len(test_names))
-    s = Oversampling(os.path.join(PATH, LABELS))
-    tr_n = [idx for idx in tr_n for _ in range(s.get(idx))]
+    # print(len(tr_n), len(val_n), len(test_names))
+    if oversample:
+        s = Oversampling(os.path.join(PATH, LABELS))
+        tr_n = [idx for idx in tr_n for _ in range(s.get(idx))]
 
-    return tr_n, val_n, test_names
+    return tr_n, val_n, cval_n, test_names
 
 
 class KaggleDataset(torch.utils.data.Dataset):
@@ -115,10 +125,12 @@ class KaggleDataset(torch.utils.data.Dataset):
         flags = cv2.IMREAD_GRAYSCALE
         img = [cv2.imread(os.path.join(self.default_path, uuid + '_' + color + '.png'), flags).astype(np.float32) for color in colors]
         img = np.stack(img, axis=-1)
-        img /= 255.
+        img /= 255.     # TODO : different normalization?
+        # img /= 128.
+        # img -= 1.0
 
         # TODO : data augmentation zoom/shear/brightness
-        if self.setname == 'train':
+        if 'train' in self.setname:
             augment_img = iaa.Sequential([
                 iaa.OneOf([
                     iaa.Affine(rotate=0),
@@ -127,18 +139,24 @@ class KaggleDataset(torch.utils.data.Dataset):
                     iaa.Affine(rotate=270),
                     iaa.Fliplr(0.5),
                     iaa.Flipud(0.5),
-                ])], random_order=True)
+                ])
+            ], random_order=True)
             img = augment_img.augment_image(img)
 
             # cutout
             if C.get()['cutout_p'] > 0.0:
                 img = cutout(C.get()['cutout_size'], C.get()['cutout_p'], False)(img)
 
+            # TODO : channel drop(except green)?
+            # d_ch = random.choice([0, 2, 3])
+            # img[:, :, d_ch] = 0
+
         if self.aug:
             # teat-time aug. : tta
             tta_list = list(itertools.product(
                 [iaa.Affine(rotate=0), iaa.Affine(rotate=90), iaa.Affine(rotate=180), iaa.Affine(rotate=270)],
-                [iaa.Fliplr(0.0), iaa.Fliplr(1.0), iaa.Flipud(1.0)]))
+                [iaa.Fliplr(0.0), iaa.Fliplr(1.0), iaa.Flipud(1.0)]
+            ))
             tta_idx = item % len(tta_list)
             img = tta_list[tta_idx][0].augment_image(img)
             img = tta_list[tta_idx][1].augment_image(img)
@@ -154,14 +172,57 @@ class KaggleDataset(torch.utils.data.Dataset):
         return img, lb
 
 
+class HPADataset(KaggleDataset):
+    def __init__(self, setname, data_list):
+        csv = pd.read_csv(LABELS_HPA).set_index('Id')
+        super().__init__(setname, data_list, aug=False)
+        self.default_path = '/data/public/rw/kaggle-human-protein-atlas/hpa_v18/images'
+        self.labels = csv
+
+
+class CombinedDataset(torch.utils.data.Dataset):
+    def __init__(self, *datasets):
+        self.datasets = datasets
+
+    def __len__(self):
+        return sum([len(x) for x in self.datasets])
+
+    def __getitem__(self, item):
+        for dataset in self.datasets:
+            if item < len(dataset):
+                return dataset[item]
+            item -= len(dataset)
+        raise Exception(item)
+
+
 def get_dataloaders(tests_aug=False):
-    tr, vl, ts = get_dataset()
-    ds_train = KaggleDataset('train', tr)
-    ds_valid = KaggleDataset('valid', vl, aug=False)
+    tr, vl, cvl, ts = get_dataset()
+    if C.get()['extdata']:
+        if C.get()['cv_fold'] >= 0:
+            with open(os.path.join('./split/tr_ext_names_fold%d' % C.get()['cv_fold']), 'r') as text_file:
+                tr_n = text_file.read().split(',')
+            with open(os.path.join('./split/val_ext_names_fold%d' % C.get()['cv_fold']), 'r') as text_file:
+                val_n = text_file.read().split(',')
+            ds_train = CombinedDataset(KaggleDataset('train', tr), HPADataset('train_hpa_v18', tr_n))
+            ds_valid = CombinedDataset(KaggleDataset('valid', tr), HPADataset('valid_hpa_v18', val_n))
+        else:
+            with open(os.path.join('./split/tr_ext_names_fold0'), 'r') as text_file:
+                tr_n = text_file.read().split(',')
+            with open(os.path.join('./split/val_ext_names_fold0'), 'r') as text_file:
+                val_n = text_file.read().split(',')
+            tr_n += val_n
+            ds_train = CombinedDataset(KaggleDataset('train', tr), HPADataset('train_hpa_v18', tr_n))
+            ds_valid = KaggleDataset('valid', tr)
+    else:
+        ds_train = KaggleDataset('train', tr)
+        ds_valid = KaggleDataset('valid', vl, aug=False)
+    ds_cvalid = KaggleDataset('cvalid', cvl, aug=False)
     ds_tests = KaggleDataset('tests', ts, aug=tests_aug)
+    print('data size=', len(ds_train), len(ds_valid), len(ds_cvalid), len(ds_tests))
 
-    d_train = torch.utils.data.DataLoader(ds_train, C.get()['batch'], pin_memory=True, num_workers=32, shuffle=True, drop_last=True)
-    d_valid = torch.utils.data.DataLoader(ds_valid, 64, pin_memory=True, num_workers=4, shuffle=False, drop_last=True)
-    d_tests = torch.utils.data.DataLoader(ds_tests, test_aug_sz if tests_aug else 1, pin_memory=True, num_workers=4, shuffle=False)
+    d_train = torch.utils.data.DataLoader(ds_train, C.get()['batch'], pin_memory=True, num_workers=128, shuffle=True, drop_last=True)
+    d_valid = torch.utils.data.DataLoader(ds_valid, C.get()['batch'], pin_memory=True, num_workers=4, shuffle=False, drop_last=True)
+    d_cvalid = torch.utils.data.DataLoader(ds_cvalid, C.get()['batch'], pin_memory=True, num_workers=4, shuffle=False, drop_last=True)
+    d_tests = torch.utils.data.DataLoader(ds_tests, test_aug_sz if tests_aug else 1, pin_memory=True, num_workers=12, shuffle=False)
 
-    return d_train, d_valid, d_tests
+    return d_train, d_valid, d_cvalid, d_tests

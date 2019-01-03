@@ -1,10 +1,11 @@
-model: inception_v3
+model: nasnet
 epoch: 300
-lr: 0.0001
-batch: 64
+lr: 0.00001
+batch: 32
+dropout: 0.5
 cv_fold: 0
 optimizer: adam
 optimizer_reg: 0.00001
 cutout_p: 1.0
-cutout_size: 20
-loss: f1
+cutout_size: 50
+loss: bce

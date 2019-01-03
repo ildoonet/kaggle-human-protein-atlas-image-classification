@@ -1,4 +1,4 @@
-model: inception_v3
+model: inception_v4
 epoch: 300
 lr: 0.0001
 batch: 64

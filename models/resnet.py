@@ -24,7 +24,7 @@ class Resnet(nn.Module):
 
         x = self.out(x)
         x = F.adaptive_avg_pool2d(x, (1, 1))
-        x = torch.sigmoid(x)
+        x = torch.sigmoid(x)        # relu + tanh? thresholded?
         x = torch.squeeze(x)
 
         return x

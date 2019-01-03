@@ -1,3 +1,5 @@
+import numbers
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -45,18 +47,78 @@ def get_f1(preds, targs):
     return torch.mean(f1)
 
 
+def get_f1_np(preds, targs):
+    tp = np.sum(preds * targs, axis=0).astype(np.float)
+    tn = np.sum((1 - preds) * (1 - targs), axis=0).astype(np.float)
+    fp = np.sum(preds * (1 - targs), axis=0).astype(np.float)
+    fn = np.sum((1 - preds) * targs, axis=0).astype(np.float)
+
+    p = tp / (tp + fp + 1e-10)
+    r = tp / (tp + fn + 1e-10)
+
+    f1 = 2*p*r / (p+r+1e-10)
+    return np.mean(f1)
+
+
 def stats_by_class(preds, targs):
-    tp = preds * targs
-    tn = torch.sum((1 - preds) * (1 - targs), dim=0).float()
-    fp = torch.sum(preds * (1 - targs), dim=0).float()
-    fn = torch.sum((1 - preds) * targs, dim=0).float()
-    return []   # TODO
+    tp = np.sum(preds * targs, axis=0).astype(np.float)
+    tn = np.sum((1 - preds) * (1 - targs), axis=0).astype(np.float)
+    fp = np.sum(preds * (1 - targs), axis=0).astype(np.float)
+    fn = np.sum((1 - preds) * targs, axis=0).astype(np.float)
+
+    p = tp / (tp + fp + 1e-10)
+    r = tp / (tp + fn + 1e-10)
+
+    return p, r
 
 
 def get_f1_threshold(preds, targs, th=0.0):
-    preds = (preds > th).int()
-    targs = (targs > th).int()
-    return get_f1(preds, targs)
+    if isinstance(th, list):
+        # threshold by class
+        th = np.array(th)
 
+    if isinstance(th, np.ndarray) and len(th.shape) == 1:
+        th = np.expand_dims(th, 0)
+
+    preds = (preds > th)
+    targs = (targs > th)
+
+    return get_f1_np(preds, targs)
+
+
+def get_f1_threshold_soft(preds, targs, th=0.0):
+    if isinstance(th, list):
+        # threshold by class
+        th = np.array(th)
+
+    if isinstance(th, np.ndarray) and len(th.shape) == 1:
+        th = np.expand_dims(th, 0)
+
+    def sigmoid_np(x):
+        return 1.0 / (1.0 + np.exp(-x))
+
+    b = 1000.
+    preds = sigmoid_np(b * (preds - th))
+    targs = targs
+
+    return get_f1_np(preds, targs)
+
+
+def get_precision_soft(preds, targs, th=0.0):
+    if isinstance(th, list):
+        # threshold by class
+        th = np.array(th)
+
+    if isinstance(th, np.ndarray) and len(th.shape) == 1:
+        th = np.expand_dims(th, 0)
+
+    def sigmoid_np(x):
+        return 1.0 / (1.0 + np.exp(-x))
+
+    b = 100.
+    preds = sigmoid_np(b * (preds - th))
+    targs = targs
+
+    return np.mean(stats_by_class(preds, targs)[0])
 
 # TODO : 'categorical_accuracy', 'binary_accuracy'

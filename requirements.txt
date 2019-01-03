@@ -1,3 +1,6 @@
 git+https://github.com/wbaek/theconf.git
 pandas
 imgaug
+pretrainedmodels
+iterative-stratification
+xgboost
