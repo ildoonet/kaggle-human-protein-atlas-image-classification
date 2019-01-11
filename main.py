@@ -6,7 +6,7 @@ from tqdm import tqdm
 from imgaug import augmenters as iaa
 
 from common import save_pred, test_aug_sz, num_class, threshold_search
-from data import get_dataloaders, get_dataset
+from data import get_dataloaders, get_dataset, get_dataloaders_eval
 from metric import FocalLoss, acc, get_f1_threshold, get_f1, f1_loss, stats_by_class
 from models.densenet import Densenet121, Densenet161, Densenet169, Densenet201
 from models.etc import PNasnet, Nasnet, Polynet, SENet154
@@ -15,6 +15,8 @@ from models.resnet import Resnet34, Resnet50, Resnet101, Resnet152
 from tensorboardX import SummaryWriter
 
 from models.vgg import Vgg16
+# from torch.nn import parallel
+# parallel.gather()
 
 __best_threshold = 0.2      # TODO : different threshold for each classes
 __f1_ths = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9]
@@ -24,11 +26,13 @@ def run_epoch(model, it_data, optimizer=None, title='', aug=False, bt_update=Tru
     global __best_threshold, __f1_ths
     losses = []
     f1s = [[] for _ in range(len(__f1_ths))]
-    t = tqdm(it_data)
+    t = it_data
+    if not C.get()['eval']:
+        t = tqdm(it_data)
     preds = []
+    feats = []
     ys = []
 
-    # TODO : BCE? FocalLoss?
     # loss_f = FocalLoss()
     if C.get()['loss'] == 'f1':
         loss_f = f1_loss
@@ -40,7 +44,8 @@ def run_epoch(model, it_data, optimizer=None, title='', aug=False, bt_update=Tru
         raise Exception('invalid loss=%s' % C.get()['loss'])
 
     for cnt, (x, y) in enumerate(t):
-        pred_y = model(x.cuda())
+        model_results = model(x.cuda())
+        pred_y, feat = model_results['logit'], model_results['feat']
         if not aug:
             if len(pred_y.shape) < 2:
                 pred_y = pred_y.unsqueeze(0)
@@ -54,6 +59,7 @@ def run_epoch(model, it_data, optimizer=None, title='', aug=False, bt_update=Tru
                 targs.append(y[i])
             pred_y = torch.stack(means, dim=0)
             y = torch.stack(targs, dim=0)
+            # feat = torch.stack(feat.unsqueeze(0), dim=0)
 
         if C.get()['loss'] == 'margin':
             y = y.cuda().long()
@@ -70,6 +76,7 @@ def run_epoch(model, it_data, optimizer=None, title='', aug=False, bt_update=Tru
 
         losses.append(loss.item())
         preds.append(pred_y.detach().cpu().numpy())
+        feats.append(feat.detach().cpu().numpy())
         ys.append(y.detach().cpu().numpy())
 
         if title != 'test' and cnt % 20 == 0:
@@ -79,22 +86,23 @@ def run_epoch(model, it_data, optimizer=None, title='', aug=False, bt_update=Tru
                 f1 = get_f1_threshold(preds_concat, ys_concat, th)
                 f1s[i] = f1
 
-        desc = ['[%s]' % title]
-        if title == 'test':
-            if isinstance(__best_threshold, np.ndarray):
-                bt_str = ','.join(['%.1f' % t for t in __best_threshold])
-                desc.append(' best_th=%s' % bt_str)
+        if not C.get()['eval']:
+            desc = ['[%s]' % title]
+            if title == 'test':
+                if isinstance(__best_threshold, np.ndarray):
+                    bt_str = ','.join(['%.1f' % t for t in __best_threshold])
+                    desc.append(' best_th=%s' % bt_str)
+                else:
+                    desc.append(' best_th=%.3f' % __best_threshold)
             else:
-                desc.append(' best_th=%.3f' % __best_threshold)
-        else:
-            desc.append('loss=%.4f' % np.mean(losses))
-            f1_desc = ' '.join(['%.3f@%.2f' % (f1, th) for th, f1 in zip(__f1_ths, f1s)])
-            desc.append('f1(%s)' % f1_desc)
+                desc.append('loss=%.4f' % np.mean(losses))
+                f1_desc = ' '.join(['%.3f@%.2f' % (f1, th) for th, f1 in zip(__f1_ths, f1s)])
+                desc.append('f1(%s)' % f1_desc)
 
-        if 'train' in title:
-            desc.append(' lr=%.5f' % lr_curr)
-        desc = ' '.join(desc)
-        t.set_description(desc)
+            if 'train' in title:
+                desc.append(' lr=%.5f' % lr_curr)
+            desc = ' '.join(desc)
+            t.set_description(desc)
 
         del pred_y, loss
 
@@ -114,6 +122,7 @@ def run_epoch(model, it_data, optimizer=None, title='', aug=False, bt_update=Tru
     return {
         'loss': np.mean(losses),
         'prediction': preds,
+        'feature': feats,
         'labels': ys,
         'f1_scores': f1s,
         'stats': stats
@@ -226,7 +235,8 @@ if __name__ == '__main__':
 
                     # run on test set
                     preds_test = run_epoch(model, d_tests, title='test', aug=False)['prediction']
-                    save_pred(ids_test, preds_test, th=__best_threshold, fname='asset/%s.csv' % C.get()['name'], valid_pred=valid_result['prediction'])
+                    save_pred(ids_test, preds_test, th=__best_threshold, fname='asset/%s.csv' % C.get()['name'],
+                              valid_pred=valid_result)
 
                     torch.save({
                         'epoch': curr_epoch,
@@ -248,30 +258,43 @@ if __name__ == '__main__':
         print('epoch@%d' % checkpoint['epoch'])
 
         # only for evaluation
+        tta = True
+        d_train, d_cvalid, d_tests = get_dataloaders_eval(tta)
         model.eval()
-        cvalid_result = run_epoch(model, d_cvalid, title='valid', aug=False)
 
-        # TODO : threshold search
+        # ----- train (sampled) -----
+        train_result = run_epoch(model, d_train, title='train', aug=tta)
+        best_th = threshold_search(train_result['prediction'], train_result['labels'])
+        __best_threshold = best_th
+        print('best_th(train)=', __best_threshold)
+
+        preds_concat = np.concatenate(train_result['prediction'], axis=0)
+        ys_concat = np.concatenate(train_result['labels'], axis=0)
+        f1_train = get_f1_threshold(preds_concat, ys_concat, __best_threshold)
+        print('f1(train)=', f1_train)
+
+        # ----- cvalid -----
+        cvalid_result = run_epoch(model, d_cvalid, title='valid', aug=tta)
         best_th = threshold_search(cvalid_result['prediction'], cvalid_result['labels'])
         __best_threshold = best_th
-        print('best_th=', ' '.join(['%.3f' % x for x in __best_threshold]))
+        print('best_th(cvalid)=', __best_threshold)
 
         preds_concat = np.concatenate(cvalid_result['prediction'], axis=0)
         ys_concat = np.concatenate(cvalid_result['labels'], axis=0)
-        f1_best = get_f1_threshold(preds_concat, ys_concat, __best_threshold)
-        print('f1_best=', f1_best)
+        f1_valid = get_f1_threshold(preds_concat, ys_concat, __best_threshold)
+        print('f1(cvalid)=', f1_valid)
 
-        preds_test = run_epoch(model, d_tests, title='test', aug=True)['prediction']
-        save_pred(ids_test, preds_test, th=__best_threshold, fname='asset/%s.aug.csv' % C.get()['name'], valid_pred=cvalid_result['prediction'])
-
-        valid_result = run_epoch(model, d_valid, title='valid-in-fold', aug=False, bt_update=False)
-        preds_concat = np.concatenate(valid_result['prediction'], axis=0)
-        ys_concat = np.concatenate(valid_result['labels'], axis=0)
-        f1_best2 = get_f1_threshold(preds_concat, ys_concat, __best_threshold)
+        # ----- test -----
+        model_test = run_epoch(model, d_tests, title='test', aug=tta)
+        preds_test = model_test['prediction']
+        feats_test = model_test['feature']
+        save_pred(ids_test, preds_test, feats_test, th=__best_threshold, fname='asset_v3/%s.aug.csv' % C.get()['name'],
+                  valid_pred=cvalid_result,
+                  train_pred=train_result)
 
         print(__best_threshold)
         # print('best_th=', ' '.join(['%.3f' % x for x in __best_threshold]))
-        print('f1_best(valid)=', f1_best2)
-        print('f1_best(cvalid)=', f1_best)
-        print(valid_result['loss'], max(valid_result['f1_scores']), valid_result['f1_scores'])
+        print('f1_best(train)=', f1_train)
+        print('f1_best(cvalid)=', f1_valid)
+        print(train_result['loss'], max(train_result['f1_scores']), train_result['f1_scores'])
         print(cvalid_result['loss'], max(cvalid_result['f1_scores']), cvalid_result['f1_scores'])

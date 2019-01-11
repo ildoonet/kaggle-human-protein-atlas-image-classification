@@ -8,3 +8,4 @@ optimizer: sgd
 cutout_p: 1.0
 cutout_size: 50
 loss: f1
+highres: False

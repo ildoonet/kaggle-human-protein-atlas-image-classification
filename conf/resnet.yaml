@@ -9,3 +9,4 @@ optimizer_reg: 0.00001
 cutout_p: 0.0
 cutout_size: 20
 loss: f1
+highres: False

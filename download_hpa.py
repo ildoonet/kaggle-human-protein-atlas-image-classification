@@ -30,10 +30,10 @@ def download(pid, image_list, base_url, save_dir, image_size=(512, 512)):
 if __name__ == '__main__':
     # Parameters
     process_num = 24
-    image_size = (512, 512)
+    image_size = (2048, 2048)
     url = 'http://v18.proteinatlas.org/images/'
     csv_path = "/data/public/rw/kaggle-human-protein-atlas/hpa_v18/HPAv18RBGY_wodpl.csv"
-    save_dir = "/data/public/rw/kaggle-human-protein-atlas/hpa_v18/images/"
+    save_dir = "/data/public/rw/kaggle-human-protein-atlas/hpa_v18/images_2048/"
 
     # Create the directory to save the images in case it doesn't exist
     try:

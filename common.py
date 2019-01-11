@@ -1,3 +1,4 @@
+import itertools
 import os
 
 import pickle
@@ -13,8 +14,7 @@ TEST = os.path.join(PATH, 'test')
 LABELS = os.path.join(PATH, 'train.csv')
 LABELS_HPA = os.path.join('/data/public/rw/kaggle-human-protein-atlas/hpa_v18', 'HPAv18RBGY_wodpl.csv')
 SAMPLE = os.path.join(PATH, 'sample_submission.csv')
-test_aug_bs = 6
-test_aug_sz = 12
+test_aug_sz = 16
 
 name_label_dict = {
     0: 'Nucleoplasm',
@@ -51,14 +51,15 @@ def num_class():
     return len(name_label_dict)
 
 
-def save_pred(ids, pred, th=0.0, fname='asset/submission.csv', valid_pred=None):
+def save_pred(ids, pred, feat=None, th=0.0, fname='asset/submission.csv', valid_pred=None, train_pred=None):
     pred_list = []
     for line in pred:
         if len(line) != len(name_label_dict):
             line = line[0]
-        # TODO : select best one if no output
-        if len(np.nonzero(np.array(line) >= th)[0]) > 0:
-            s = ' '.join(list([str(i) for i in np.nonzero(np.array(line) >= th)[0]]))
+        # select best one if no output
+        non_zeros = np.nonzero(np.array(line) >= th)[0]
+        if len(non_zeros) > 0:
+            s = ' '.join(list([str(i) for i in non_zeros]))
         else:
             s = str(np.argmax(line))
         pred_list.append(s)
@@ -71,7 +72,8 @@ def save_pred(ids, pred, th=0.0, fname='asset/submission.csv', valid_pred=None):
     with open(fname_pred, 'wb') as f:
         pickle.dump({
             'threshold': th,
-            'prediction': pred
+            'prediction': pred,
+            'feature': feat,
         }, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     if valid_pred:
@@ -79,34 +81,59 @@ def save_pred(ids, pred, th=0.0, fname='asset/submission.csv', valid_pred=None):
         with open(fname_pred, 'wb') as f:
             pickle.dump({
                 'threshold': th,
-                'prediction': valid_pred
+                'prediction': valid_pred['prediction'],
+                'feature': valid_pred['feature'],
+            }, f, protocol=pickle.HIGHEST_PROTOCOL)
+    if train_pred:
+        fname_pred = fname.replace('.csv', '.train.pkl')
+        with open(fname_pred, 'wb') as f:
+            pickle.dump({
+                'threshold': th,
+                'prediction': train_pred['prediction'],
+                'feature': train_pred['feature'],
             }, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def threshold_search(preds, ys):
+def threshold_search(preds, ys, flat=True):
     if isinstance(preds, list):
         preds = np.concatenate(preds, axis=0)
         ys = np.concatenate(ys, axis=0)
-    ths = np.zeros(1) + 0.5
+    # grid search
+    max_f1 = -1.0
+    max_th = 0.5
+    for delta in range(30, 60):
+        th = delta / 100.
+        f1 = get_f1_threshold(preds, ys, th)
+        if max_f1 <= f1:
+            max_f1 = f1
+            max_th = th
+    found = max_th
 
-    # maximize f1
-    error_f = lambda p: np.concatenate((
-        1 - get_f1_threshold_soft(preds, ys, p),
-        0 * (p-0.5)
-    ), axis=None)
-    found, success = opt.leastsq(error_f, ths)
-    return found
+    if flat:
+        return found
 
-    #
-    ths = np.zeros(num_class()) + found[0]
+    from itertools import product
+    delta = [-0.05, 0.0, 0.05]
+    delta = [-0.2, -0.15, -0.1, -0.05, 0.05, 0.1, 0.15, 0.20, 0.25, 0.0]
 
-    # maximize f1
-    error_f = lambda p: np.concatenate((
-        1 - get_f1_threshold_soft(preds, ys, p),
-        1e-6 * (p - found[0])
-    ), axis=None)
-    founds, success = opt.leastsq(error_f, ths)
+    max_th = [max_th] * num_class()
+    for cls in range(num_class()):
+        before_changed = max_th.copy()
+        for d in delta:
+            new_th = before_changed.copy()
+            if new_th[cls] + d <= 0.1:
+                continue
 
-    # founds = founds - 2./100.
+            new_th[cls] += d
+            f1 = get_f1_threshold(preds, ys, new_th)
+            if max_f1 <= f1:
+                max_f1 = f1
+                max_th = new_th
+    return max_th
 
-    return founds
+
+def grouper(iterable, n, fillvalue=None):
+    "Collect data into fixed-length chunks or blocks"
+    # grouper('ABCDEFG', 3, 'x') --> ABC DEF Gxx
+    args = [iter(iterable)] * n
+    return itertools.zip_longest(fillvalue=fillvalue, *args)

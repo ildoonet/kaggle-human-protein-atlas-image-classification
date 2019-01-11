@@ -1,7 +1,7 @@
 model: densenet121
 epoch: 300
 lr: 0.0001
-batch: 64
+batch: 16
 cv_fold: 0
 dropout: 0.2
 optimizer: adam
@@ -9,4 +9,4 @@ optimizer_reg: 0.00001
 cutout_p: 1.0
 cutout_size: 140
 loss: f1
-highres: False
+highres: True

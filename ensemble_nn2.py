@@ -67,6 +67,15 @@ if __name__ == '__main__':
         'senet_fold2_lr0.00005',
         'senet_fold3_lr0.00005',
         'senet_fold4_lr0.00005',
+        'densenet121_fold0_lr0.0001_bce',
+        'densenet121_fold1_lr0.0001_bce',
+        'densenet121_fold2_lr0.0001_bce',
+        'densenet121_fold3_lr0.0001_bce',
+        'densenet121_fold4_lr0.0001_bce',
+        'densenet169_fold1_lr0.0001_bce',
+        'densenet169_fold2_lr0.0001_bce',
+        'densenet169_fold3_lr0.0001_bce',
+        'densenet169_fold4_lr0.0001_bce',
     ]
 
     models = ensemble_190103
@@ -113,7 +122,7 @@ if __name__ == '__main__':
     w = torch.zeros((1, len(models), num_class()), requires_grad=True)
     generator = tqdm(range(200000))
     # optimizer = torch.optim.SGD([w], lr=1, momentum=0.99, weight_decay=1e-5, nesterov=True)
-    optimizer = torch.optim.Adam([w], lr=0.1, weight_decay=1e-5, amsgrad=True)
+    optimizer = torch.optim.Adam([w], lr=1, weight_decay=1e-5, amsgrad=True)
     loss_fn = BCELoss()
     # loss_fn = f1_loss
     # loss_fn = MultiLabelMarginLoss()
@@ -170,8 +179,6 @@ if __name__ == '__main__':
     def sigmoid(x, derivative=False):
         return x * (1 - x) if derivative else 1 / (1 + np.exp(-x))
 
-    def tanh(x):
-        return 2 / (1 + np.exp(-2 * x) - 1)
     best_w = sigmoid(best_w)
     print()
     with np.printoptions(precision=2, suppress=True):

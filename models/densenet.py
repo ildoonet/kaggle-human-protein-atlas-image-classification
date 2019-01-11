@@ -26,10 +26,11 @@ class Densenet(nn.Module):
         x = F.adaptive_avg_pool2d(x, (1, 1))
         x = self.dropout(x)
         x = torch.squeeze(x)
+        feat = x
         x = self.encoder.classifier(x)
         x = torch.sigmoid(x)
 
-        return x
+        return {'logit': x, 'feat': feat}
 
 
 class Densenet121(Densenet):

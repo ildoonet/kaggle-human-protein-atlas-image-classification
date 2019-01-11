@@ -97,7 +97,7 @@ def get_f1_threshold_soft(preds, targs, th=0.0):
     def sigmoid_np(x):
         return 1.0 / (1.0 + np.exp(-x))
 
-    b = 1000.
+    b = 500.
     preds = sigmoid_np(b * (preds - th))
     targs = targs
 
@@ -120,5 +120,3 @@ def get_precision_soft(preds, targs, th=0.0):
     targs = targs
 
     return np.mean(stats_by_class(preds, targs)[0])
-
-# TODO : 'categorical_accuracy', 'binary_accuracy'

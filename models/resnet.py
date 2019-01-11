@@ -21,13 +21,14 @@ class Resnet(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(self.dropout(x))
+        feat = x
 
         x = self.out(x)
         x = F.adaptive_avg_pool2d(x, (1, 1))
         x = torch.sigmoid(x)        # relu + tanh? thresholded?
         x = torch.squeeze(x)
 
-        return x
+        return {'logit': x, 'feat': feat}
 
     def set(self, encoder, feat_size, pre):
         self.conv1 = nn.Conv2d(4, 64, kernel_size=7, stride=2, padding=3, bias=False)

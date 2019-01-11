@@ -9,7 +9,7 @@ import pandas as pd
 from imgaug import augmenters as iaa
 from theconf import Config as C
 
-from common import PATH, name_label_dict, LABELS, TEST, TRAIN, SAMPLE, test_aug_bs, test_aug_sz, LABELS_HPA
+from common import PATH, name_label_dict, LABELS, TEST, TRAIN, SAMPLE, test_aug_sz, LABELS_HPA
 
 
 class Oversampling:
@@ -107,6 +107,13 @@ class KaggleDataset(torch.utils.data.Dataset):
         self.list = data_list
         self.labels = pd.read_csv(LABELS).set_index('Id')
         self.default_path = TEST if self.setname == 'tests' else TRAIN
+        if C.get()['highres']:
+            self.default_path = self.default_path.replace('train', 'train_full_size').replace('test', 'test_full_size')
+            self.resize = True
+            self.ext = '.tif'
+        else:
+            self.resize = False
+            self.ext = '.png'
         self.aug = aug
 
     def __len__(self):
@@ -123,11 +130,11 @@ class KaggleDataset(torch.utils.data.Dataset):
 
         colors = ['red', 'green', 'blue', 'yellow']
         flags = cv2.IMREAD_GRAYSCALE
-        img = [cv2.imread(os.path.join(self.default_path, uuid + '_' + color + '.png'), flags).astype(np.float32) for color in colors]
+        img = [cv2.imread(os.path.join(self.default_path, uuid + '_' + color + self.ext), flags) for color in colors]
+        if self.resize:
+            img = [cv2.resize(x, (1024, 1024)) for x in img]
+
         img = np.stack(img, axis=-1)
-        img /= 255.     # TODO : different normalization?
-        # img /= 128.
-        # img -= 1.0
 
         # TODO : data augmentation zoom/shear/brightness
         if 'train' in self.setname:
@@ -155,12 +162,14 @@ class KaggleDataset(torch.utils.data.Dataset):
             # teat-time aug. : tta
             tta_list = list(itertools.product(
                 [iaa.Affine(rotate=0), iaa.Affine(rotate=90), iaa.Affine(rotate=180), iaa.Affine(rotate=270)],
-                [iaa.Fliplr(0.0), iaa.Fliplr(1.0), iaa.Flipud(1.0)]
+                [iaa.Fliplr(0.0), iaa.Fliplr(1.0), iaa.Flipud(1.0), iaa.Sequential([iaa.Fliplr(1.0), iaa.Flipud(1.0)])]
             ))
             tta_idx = item % len(tta_list)
             img = tta_list[tta_idx][0].augment_image(img)
             img = tta_list[tta_idx][1].augment_image(img)
 
+        img = img.astype(np.float32)
+        img /= 255.  # TODO : different normalization?
         img = np.transpose(img, (2, 0, 1))
         img = np.ascontiguousarray(img)
 
@@ -176,8 +185,12 @@ class HPADataset(KaggleDataset):
     def __init__(self, setname, data_list):
         csv = pd.read_csv(LABELS_HPA).set_index('Id')
         super().__init__(setname, data_list, aug=False)
-        self.default_path = '/data/public/rw/kaggle-human-protein-atlas/hpa_v18/images'
+        if C.get()['highres']:
+            self.default_path = '/data/public/rw/kaggle-human-protein-atlas/hpa_v18/images_2048'
+        else:
+            self.default_path = '/data/public/rw/kaggle-human-protein-atlas/hpa_v18/images'
         self.labels = csv
+        self.ext = '.png'
 
 
 class CombinedDataset(torch.utils.data.Dataset):
@@ -193,6 +206,10 @@ class CombinedDataset(torch.utils.data.Dataset):
                 return dataset[item]
             item -= len(dataset)
         raise Exception(item)
+
+    def set_aug(self, aug):
+        for d in self.datasets:
+            d.aug = aug
 
 
 def get_dataloaders(tests_aug=False):
@@ -220,9 +237,26 @@ def get_dataloaders(tests_aug=False):
     ds_tests = KaggleDataset('tests', ts, aug=tests_aug)
     print('data size=', len(ds_train), len(ds_valid), len(ds_cvalid), len(ds_tests))
 
-    d_train = torch.utils.data.DataLoader(ds_train, C.get()['batch'], pin_memory=True, num_workers=128, shuffle=True, drop_last=True)
+    d_train = torch.utils.data.DataLoader(ds_train, C.get()['batch'], pin_memory=True, num_workers=16 if C.get()['highres'] else 128, shuffle=True, drop_last=True)
     d_valid = torch.utils.data.DataLoader(ds_valid, C.get()['batch'], pin_memory=True, num_workers=4, shuffle=False, drop_last=True)
     d_cvalid = torch.utils.data.DataLoader(ds_cvalid, C.get()['batch'], pin_memory=True, num_workers=4, shuffle=False, drop_last=True)
-    d_tests = torch.utils.data.DataLoader(ds_tests, test_aug_sz if tests_aug else 1, pin_memory=True, num_workers=12, shuffle=False)
+    d_tests = torch.utils.data.DataLoader(ds_tests, test_aug_sz if tests_aug else 1, pin_memory=True, num_workers=16, shuffle=False)
 
     return d_train, d_valid, d_cvalid, d_tests
+
+
+def get_dataloaders_eval(tta=True):
+    tr, vl, cvl, ts = get_dataset()
+    with open('./split/sampled_names', 'r') as text_file:
+        tr = text_file.read().split(',')
+    with open('./split/sampled_ext_names', 'r') as text_file:
+        ext_n = text_file.read().split(',')
+    ds_train = CombinedDataset(KaggleDataset('train', tr), HPADataset('train_hpa_v18', ext_n))
+    ds_train.set_aug(tta)
+    ds_cvalid = KaggleDataset('cvalid', cvl, aug=tta)
+    ds_tests = KaggleDataset('tests', ts, aug=tta)
+
+    d_train = torch.utils.data.DataLoader(ds_train, test_aug_sz if tta else 1, pin_memory=True, num_workers=16, shuffle=False)
+    d_valid = torch.utils.data.DataLoader(ds_cvalid, test_aug_sz if tta else 1, pin_memory=True, num_workers=16, shuffle=False)
+    d_tests = torch.utils.data.DataLoader(ds_tests, test_aug_sz if tta else 1, pin_memory=True, num_workers=16, shuffle=False)
+    return d_train, d_valid, d_tests

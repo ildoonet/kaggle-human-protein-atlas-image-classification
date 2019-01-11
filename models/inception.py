@@ -24,13 +24,13 @@ class InceptionV3(nn.Module):
     def forward(self, x):
         x = torch.nn.functional.interpolate(x, size=(299, 299), mode='bilinear')     # resize
         if self.training:
-            x, x_aux = self.encoder(x)
+            x, x_aux, feat = self.encoder(x)
             x = (torch.sigmoid(x) + torch.sigmoid(x_aux)) * 0.5
         else:
-            x = self.encoder(x)
+            x, feat = self.encoder(x)
             x = torch.sigmoid(x)
 
-        return x
+        return {'logit': x, 'feat': feat}
 
 
 class InceptionV4(nn.Module):
@@ -50,6 +50,7 @@ class InceptionV4(nn.Module):
         x = self.encoder.features(x)
         x = F.adaptive_avg_pool2d(x, (1, 1))
         x = x.view(x.size(0), -1)
+        feat = x
         x = self.last_linear(x)
         x = torch.sigmoid(x)
-        return x
+        return {'logit': x, 'feat': feat}

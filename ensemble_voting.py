@@ -79,6 +79,15 @@ if __name__ == '__main__':
         'densenet169_fold4'
     ]
 
+    ensemble_190104 = [
+        'ensemble_nn3_lr001_try1.csv',
+        'ensemble_nn3_lr001_try2.csv',
+        'ensemble_nn3_lr001_try3.csv',
+        'ensemble_nn3_lr005_try1.csv',
+        'ensemble_nn3_lr005_try2.csv',
+        'ensemble_nn3_lr005_try3.csv',
+    ]
+
     # ensemble_list = ensemble_181226
     # ensemble_th = 3
     # ensemble_list = ensemble_181227
@@ -87,8 +96,8 @@ if __name__ == '__main__':
     # ensemble_th = 1
     # ensemble_list = ensemble_181228         # 0.598
     # ensemble_th = 2
-    ensemble_list = ensemble_181229[-10:]
-    ensemble_th = 2
+    # ensemble_list = ensemble_181229[-10:]
+    # ensemble_th = 2
 
     # ensemble_181231 = [           # 0.579
     #     'inceptionv4_fold1',
@@ -99,6 +108,32 @@ if __name__ == '__main__':
     # ]
     # ensemble_list = ensemble_181231
     # ensemble_th = 2
+    ensemble_list = ensemble_190104
+    ensemble_th = 4
+
+    model_selection = [
+        'densenet121_fold0',
+        'densenet121_fold3',
+        'densenet121_fold4',
+        'densenet121_fold2_lr0.0001_bce',
+
+        'densenet169_fold0',
+        'densenet169_fold3',
+        'densenet169_fold4',
+        'densenet169_fold2_lr0.0001_bce',  # <--- best one
+
+        'inceptionv4_fold0',
+        'inceptionv4_fold1',
+        'inceptionv4_fold3',
+
+        'pnasnet_fold2_lr0.00005',
+        'senet_fold0_lr0.00005',
+
+        'nasnet_fold0_lr0.0001_relu_bce',
+        'nasnet_fold2_lr0.0001_relu_bce',
+    ]
+    ensemble_list = model_selection
+    ensemble_th = 3
 
     C.get()['cv_fold'] = 0
     _, _, _, ids_test = get_dataset()
@@ -109,7 +144,10 @@ if __name__ == '__main__':
         votes.append(vote)
 
     for model_name in ensemble_list:
-        path = 'asset/%s.aug.csv' % model_name
+        if '.csv' in model_name:
+            path = 'asset_v3/%s' % model_name
+        else:
+            path = 'asset_v3/%s.aug.csv' % model_name
         print('load... %s' % path)
         labels = pd.read_csv(path).set_index('Id')
         for idx, s in enumerate(labels['Predicted']):

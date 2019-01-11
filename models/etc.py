@@ -18,17 +18,20 @@ class PNasnet(nn.Module):
         self.encoder.conv_0.conv = conv0
         self.dropout = nn.Dropout(C.get()['dropout'])
         self.last_linear = nn.Linear(4320, num_class())
+        self.use_relu = False
 
     def forward(self, x):
         # x = torch.nn.functional.interpolate(x, size=(299, 299), mode='bilinear')
         x = self.encoder.features(x)
-        # x = F.relu(x, inplace=False)
+        if self.use_relu:
+            x = F.relu(x, inplace=False)
         x = F.adaptive_avg_pool2d(x, (1, 1))
         x = x.view(x.size(0), -1)
         x = self.dropout(x)
+        feat = x
         x = self.last_linear(x)
         x = torch.sigmoid(x)
-        return x
+        return {'logit': x, 'feat': feat}
 
 
 class Nasnet(PNasnet):
@@ -41,6 +44,7 @@ class Nasnet(PNasnet):
             conv0.weight = nn.Parameter(torch.cat((w, 0.5 * (w[:, :1, :, :] + w[:, 2:, :, :])), dim=1))
         self.encoder.conv0.conv = conv0
         self.last_linear = nn.Linear(4032, num_class())
+        self.use_relu = True
 
 
 class Polynet(PNasnet):
