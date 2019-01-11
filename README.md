@@ -2,7 +2,7 @@
 
 Kaggle 2018 @ Human Protein Atlas Image Classification
 
-35st Place Algorithm and Model.
+35th Place Algorithm and Model.
 
 '*' : Working methods between options.
 
