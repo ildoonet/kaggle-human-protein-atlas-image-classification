@@ -37,3 +37,12 @@ Kaggle 2018 @ Human Protein Atlas Image Classification
   - Binary Cross Entropy *
   - Focal Loss
   - MultiLabelMarginLoss
+
+### Train
+
+Training with yaml configuratin files and changed few parameter.
+
+```
+$ python main.py -c conf/densenet.yaml
+$ python main.py -c conf/densenet.yaml --lr 0.0001
+```
